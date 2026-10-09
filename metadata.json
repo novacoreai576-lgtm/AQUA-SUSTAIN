@@ -1,0 +1,6 @@
+{
+  "name": "AquaSustain",
+  "description": "Smart Rainwater Harvesting and Sustainable Irrigation System dashboard for Arduino UNO R4 WiFi",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
