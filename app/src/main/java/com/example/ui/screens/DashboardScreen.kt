@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.CloudQueue
+import androidx.compose.material.icons.filled.Eco
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.WaterDrop
@@ -60,6 +61,7 @@ import com.example.ui.components.IrrigationLogicMatrixCard
 import com.example.ui.components.ManualPumpControlCard
 import com.example.ui.components.PumpStatusCard
 import com.example.ui.components.RainStatusCard
+import com.example.ui.components.RealtimeSensorDashboard
 import com.example.ui.components.SoilMoistureCard
 import com.example.ui.components.SystemStatusCard
 import com.example.ui.components.WaterTankIndicator
@@ -69,7 +71,6 @@ import com.example.ui.theme.AlertRedContainer
 import com.example.ui.theme.AquaPrimary
 import com.example.ui.theme.AquaPrimaryContainer
 import com.example.ui.theme.EcoGreen
-import com.example.ui.theme.EcoGreenContainer
 import com.example.ui.theme.NeutralDark
 import com.example.ui.theme.NeutralMedium
 
@@ -80,12 +81,16 @@ fun DashboardScreen(
     systemStatus: SystemStatusSummary,
     deviceMetadata: DeviceItem,
     weatherInfo: WeatherInfo,
+    advice: com.example.data.model.IrrigationAdvice? = null,
+    isAiAnalyzing: Boolean = false,
     commandStatus: CommandStatus,
     formattedElapsed: String,
     dataSourceMode: DataSourceMode,
     onSendPumpCommand: (Boolean) -> Unit,
     onSetMode: (String) -> Unit,
     onClearCommandStatus: () -> Unit,
+    onRefreshAiAdvice: () -> Unit = {},
+    onOpenBioLeaf: () -> Unit = {},
     onOpenSettings: () -> Unit,
     onSignOut: () -> Unit = {},
     modifier: Modifier = Modifier
@@ -105,7 +110,7 @@ fun DashboardScreen(
             },
             text = {
                 Text(
-                    text = "Are you sure you want to sign out from AquaSustain?",
+                    text = "Are you sure you want to sign out from Aquasustain?",
                     style = MaterialTheme.typography.bodyMedium,
                     color = NeutralDark
                 )
@@ -154,14 +159,14 @@ fun DashboardScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.WaterDrop,
-                            contentDescription = "AquaSustain Logo",
+                            contentDescription = "Aquasustain Logo",
                             tint = Color.White,
                             modifier = Modifier.size(20.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "AquaSustain",
+                        text = "Aquasustain",
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Black,
                         color = AquaPrimary
@@ -243,6 +248,11 @@ fun DashboardScreen(
             sensorData = sensorData
         )
 
+        // Real-Time Sensor Telemetry Dashboard (Gauges for Water Tank & Soil Moisture + Status Cards)
+        RealtimeSensorDashboard(
+            sensorData = sensorData
+        )
+
         // 1. Prominent Pump Status Card
         PumpStatusCard(
             isPumpOn = sensorData.pump
@@ -290,13 +300,78 @@ fun DashboardScreen(
 
         // 5. Weather & AI Smart Advisory Section
         WeatherAiCard(
-            weather = weatherInfo
+            weather = weatherInfo,
+            advice = advice,
+            isAiAnalyzing = isAiAnalyzing,
+            onRefreshAiAdvice = onRefreshAiAdvice
         )
 
         // 6. Existing Irrigation Logic Truth Table Visualizer
         IrrigationLogicMatrixCard(
             sensorData = sensorData
         )
+
+        // 7. BIO LEAF AI Module Entry Card (100% Software Crop Health Suite)
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .clickable { onOpenBioLeaf() }
+                .testTag("dashboard_bioleaf_card"),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, Color(0xFFBBF7D0), RoundedCornerShape(18.dp))
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(EcoGreen),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Eco,
+                            contentDescription = "Open BIO LEAF AI",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "BIO LEAF AI",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Black,
+                            color = NeutralDark
+                        )
+                        Text(
+                            text = "Plant ID, Disease & Pest Scanner, Soil Guidance, Community & Multilingual AI",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = NeutralMedium
+                        )
+                    }
+                }
+                Text(
+                    text = "Open",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = EcoGreen,
+                    modifier = Modifier.padding(start = 8.dp)
+                )
+            }
+        }
 
         Spacer(modifier = Modifier.height(16.dp))
     }

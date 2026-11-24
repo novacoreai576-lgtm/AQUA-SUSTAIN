@@ -80,7 +80,7 @@ fun AboutSystemScreen(
         // Title
         Column {
             Text(
-                text = "About AquaSustain",
+                text = "About Aquasustain",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.ExtraBold,
                 color = AquaPrimary
@@ -135,7 +135,7 @@ fun AboutSystemScreen(
                                 letterSpacing = 0.8.sp
                             )
                             Text(
-                                text = userProfile?.name ?: "AquaSustain User",
+                                text = userProfile?.name ?: "Aquasustain User",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = NeutralDark
@@ -174,7 +174,7 @@ fun AboutSystemScreen(
                         fontSize = 11.sp
                     )
                     Text(
-                        text = "Active Device: ${deviceMetadata?.name ?: "AquaSustain Farm"} (${deviceMetadata?.board ?: "Arduino UNO R4 WiFi"})",
+                        text = "Active Device: ${deviceMetadata?.name ?: "Aquasustain Farm"} (${deviceMetadata?.board ?: "Arduino UNO R4 WiFi"})",
                         style = MaterialTheme.typography.bodySmall,
                         color = AquaPrimary,
                         fontWeight = FontWeight.SemiBold
@@ -206,7 +206,7 @@ fun AboutSystemScreen(
             Box {
                 Image(
                     painter = painterResource(id = R.drawable.img_aquasustain_hero),
-                    contentDescription = "AquaSustain Rainwater Harvesting Farm Illustration",
+                    contentDescription = "Aquasustain Rainwater Harvesting Farm Illustration",
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(16f / 9f),

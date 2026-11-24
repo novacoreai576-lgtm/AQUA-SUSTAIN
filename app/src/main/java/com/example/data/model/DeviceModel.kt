@@ -4,17 +4,17 @@ import com.google.firebase.Timestamp
 
 data class DeviceItem(
     val deviceId: String = "AQUA-001",
-    val name: String = "AquaSustain Farm",
+    val name: String = "AquaSustain Monitor",
     val board: String = "Arduino UNO R4 WiFi",
-    val online: Boolean = true,
+    val online: Boolean = false,
     val lastSeen: Timestamp? = null
 )
 
 data class SensorReading(
     val id: String = "",
     val rain: Boolean = false,
-    val soilMoisture: Int = 35,
-    val waterLevel: Int = 72,
+    val soilMoisture: Int = 0,
+    val waterLevel: Int = 0,
     val pump: Boolean = false,
     val timestamp: Timestamp? = null,
     val timestampEpochMs: Long = System.currentTimeMillis()
@@ -30,9 +30,9 @@ data class PumpCommand(
 
 data class HourlyForecastItemData(
     val time: String = "Now",
-    val tempC: Int = 27,
-    val rainProb: Int = 20,
-    val condition: String = "Partly Cloudy",
+    val tempC: Int = 0,
+    val rainProb: Int = 0,
+    val condition: String = "Unavailable",
     val weatherCode: Int = 2,
     val rainMm: Double = 0.0
 )
@@ -40,11 +40,11 @@ data class HourlyForecastItemData(
 data class DailyForecastItemData(
     val day: String = "Today",
     val date: String = "",
-    val maxTempC: Int = 30,
-    val minTempC: Int = 22,
-    val rainProb: Int = 30,
+    val maxTempC: Int = 0,
+    val minTempC: Int = 0,
+    val rainProb: Int = 0,
     val rainSumMm: Double = 0.0,
-    val condition: String = "Partly Cloudy",
+    val condition: String = "Unavailable",
     val weatherCode: Int = 2
 )
 
@@ -60,20 +60,21 @@ data class GeoLocation(
 }
 
 data class WeatherInfo(
-    val temperatureC: Int = 27,
-    val condition: String = "Partly Cloudy",
-    val rainProbabilityPercent: Int = 75,
-    val rainPredictionText: String = "Rain likely in next 3 hours",
-    val smartRecommendation: String = "High rain probability (75%). Postponing irrigation will conserve underground tank water.",
-    val humidityPercent: Int = 68,
-    val feelsLikeC: Int = 28,
-    val windSpeedKmh: Double = 12.0,
+    val temperatureC: Int = 0,
+    val condition: String = "Waiting for data connection.",
+    val rainProbabilityPercent: Int = 0,
+    val rainPredictionText: String = "Waiting for weather data connection.",
+    val smartRecommendation: String = "Connect to the internet or refresh weather to view Open-Meteo environmental insights.",
+    val humidityPercent: Int = 0,
+    val feelsLikeC: Int = 0,
+    val windSpeedKmh: Double = 0.0,
     val precipitationMm: Double = 0.0,
-    val locationName: String = "Farm Station",
+    val locationName: String = "Select Location",
     val latitude: Double = 28.6139,
     val longitude: Double = 77.2090,
-    val lastUpdatedTime: String = "Just now",
-    val isLive: Boolean = true,
+    val lastUpdatedTime: String = "Not synced",
+    val isLive: Boolean = false,
+    val hasFetched: Boolean = false,
     val weatherCode: Int = 2,
     val hourlyForecast: List<HourlyForecastItemData> = emptyList(),
     val dailyForecast: List<DailyForecastItemData> = emptyList()

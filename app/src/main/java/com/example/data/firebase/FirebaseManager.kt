@@ -4,6 +4,9 @@ import android.util.Log
 import com.example.data.model.AquaSustainData
 import com.example.data.model.SensorReading
 import com.example.data.model.UserProfile
+import com.example.data.model.WaterAssistantMessage
+import com.example.data.model.WaterQualityAnalysisRecord
+import com.example.data.model.WaterUsageRecord
 import com.example.data.model.WeatherInfo
 import com.google.firebase.FirebaseException
 import com.google.firebase.FirebaseNetworkException
@@ -14,9 +17,9 @@ import com.google.firebase.auth.FirebaseAuthInvalidUserException
 import com.google.firebase.auth.FirebaseAuthUserCollisionException
 import com.google.firebase.auth.FirebaseAuthWeakPasswordException
 import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.channels.awaitClose
@@ -46,7 +49,6 @@ class FirebaseManager(
     private val _isAuthReady = MutableStateFlow(false)
     val isAuthReady: StateFlow<Boolean> = _isAuthReady.asStateFlow()
 
-    // Deduplication tracking for sensorHistory writes
     private var lastRecordedSoil = -1
     private var lastRecordedWater = -1
     private var lastRecordedRain: Boolean? = null
@@ -60,7 +62,7 @@ class FirebaseManager(
             _isAuthReady.value = true
             if (user != null) {
                 fetchUserProfile(user.uid)
-                ensureInitialUserDocuments(user.uid, user.displayName ?: "AquaSustain User", user.email ?: "")
+                ensureUserProfileDocument(user.uid, user.displayName ?: "AquaSustain User", user.email ?: "")
             } else {
                 _userProfile.value = null
             }
@@ -73,9 +75,6 @@ class FirebaseManager(
     val currentUserId: String?
         get() = auth.currentUser?.uid
 
-    /**
-     * Sign In with Email & Password
-     */
     suspend fun signIn(email: String, password: String): Result<FirebaseUser> {
         return try {
             val result = auth.signInWithEmailAndPassword(email.trim(), password).await()
@@ -90,64 +89,38 @@ class FirebaseManager(
     }
 
     /**
-     * Create Account & Initialize Firestore Profile:
-     * users/{userId}
+     * Creates user account and authentic profile document ONLY.
+     * Strictly NO fake sensor/weather/history seeding.
      */
     suspend fun signUp(name: String, email: String, password: String): Result<FirebaseUser> {
         return try {
-            val result = auth.createUserWithEmailAndPassword(email.trim(), password).await()
+            val cleanName = name.trim()
+            val cleanEmail = email.trim()
+            val result = auth.createUserWithEmailAndPassword(cleanEmail, password).await()
             val user = result.user ?: throw Exception("Failed to register user")
             _currentUser.value = user
             val uid = user.uid
 
-            // 1. users/{userId}
-            val profileData = hashMapOf(
-                "name" to name.trim(),
-                "email" to email.trim(),
-                "createdAt" to FieldValue.serverTimestamp()
-            )
-            firestore.collection("users").document(uid).set(profileData).await()
+            try {
+                user.updateProfile(
+                    UserProfileChangeRequest.Builder()
+                        .setDisplayName(cleanName)
+                        .build()
+                ).await()
+            } catch (e: Exception) {
+                Log.w(TAG, "Display name update note: ${e.message}")
+            }
 
-            // 2. sensorData/{userId}
-            val initialSensorData = hashMapOf(
-                "rain" to false,
-                "soilMoisture" to 35,
-                "waterLevel" to 72,
-                "pump" to true,
-                "updatedAt" to FieldValue.serverTimestamp()
-            )
-            firestore.collection("sensorData").document(uid).set(initialSensorData).await()
-
-            // 3. pumpControl/{userId}
-            val initialPumpControl = hashMapOf(
-                "pump" to true,
-                "mode" to "auto",
-                "command" to "PUMP_ON",
-                "updatedAt" to FieldValue.serverTimestamp()
-            )
-            firestore.collection("pumpControl").document(uid).set(initialPumpControl).await()
-
-            // 4. weather/{userId}
-            val initialWeather = hashMapOf(
-                "temperature" to 30,
-                "rainProbability" to 80,
-                "condition" to "Cloudy",
-                "recommendation" to "Rain is likely. Consider delaying irrigation.",
-                "updatedAt" to FieldValue.serverTimestamp()
-            )
-            firestore.collection("weather").document(uid).set(initialWeather).await()
-
-            // 5. settings/{userId}
-            val initialSettings = hashMapOf(
-                "arduinoEndpoint" to "http://192.168.1.150/api/status",
-                "board" to "Arduino UNO R4 WiFi",
-                "soilThreshold" to 50,
-                "updatedAt" to FieldValue.serverTimestamp()
-            )
-            firestore.collection("settings").document(uid).set(initialSettings).await()
-
-            // 6. Seed initial history records in sensorHistory/{userId}/records/{recordId}
-            seedInitialHistoryRecords(uid)
+            try {
+                val profileData = hashMapOf(
+                    "name" to cleanName,
+                    "email" to cleanEmail,
+                    "createdAt" to FieldValue.serverTimestamp()
+                )
+                firestore.collection("users").document(uid).set(profileData).await()
+            } catch (e: Exception) {
+                Log.w(TAG, "Initial profile write note: ${e.message}")
+            }
 
             fetchUserProfile(uid)
             Result.success(user)
@@ -157,9 +130,6 @@ class FirebaseManager(
         }
     }
 
-    /**
-     * Send Password Reset Email
-     */
     suspend fun sendPasswordReset(email: String): Result<Unit> {
         return try {
             auth.sendPasswordResetEmail(email.trim()).await()
@@ -169,10 +139,6 @@ class FirebaseManager(
         }
     }
 
-    /**
-     * Sign Out:
-     * Clears user session from Firebase Auth and resets local profile state
-     */
     fun signOut() {
         auth.signOut()
         _currentUser.value = null
@@ -181,16 +147,14 @@ class FirebaseManager(
         lastRecordedWater = -1
         lastRecordedRain = null
         lastRecordedPump = null
+        lastRecordTimestampMs = 0L
     }
 
-    /**
-     * Fetch user profile: users/{userId}
-     */
     fun fetchUserProfile(uid: String) {
         firestore.collection("users").document(uid).get()
             .addOnSuccessListener { doc ->
                 if (doc.exists()) {
-                    val name = doc.getString("name") ?: "AquaSustain User"
+                    val name = doc.getString("name") ?: (auth.currentUser?.displayName ?: "AquaSustain User")
                     val email = doc.getString("email") ?: (auth.currentUser?.email ?: "")
                     val createdAt = doc.getTimestamp("createdAt")
                     _userProfile.value = UserProfile(
@@ -206,10 +170,7 @@ class FirebaseManager(
             }
     }
 
-    /**
-     * Ensure initial user docs exist if user existed previously
-     */
-    private fun ensureInitialUserDocuments(uid: String, name: String, email: String) {
+    private fun ensureUserProfileDocument(uid: String, name: String, email: String) {
         firestore.collection("users").document(uid).get().addOnSuccessListener { doc ->
             if (!doc.exists()) {
                 val profile = hashMapOf(
@@ -220,102 +181,16 @@ class FirebaseManager(
                 firestore.collection("users").document(uid).set(profile)
             }
         }
-
-        firestore.collection("sensorData").document(uid).get().addOnSuccessListener { doc ->
-            if (!doc.exists()) {
-                val sensorDoc = hashMapOf(
-                    "rain" to false,
-                    "soilMoisture" to 35,
-                    "waterLevel" to 72,
-                    "pump" to true,
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-                firestore.collection("sensorData").document(uid).set(sensorDoc)
-                seedInitialHistoryRecords(uid)
-            }
-        }
-
-        firestore.collection("pumpControl").document(uid).get().addOnSuccessListener { doc ->
-            if (!doc.exists()) {
-                val pumpDoc = hashMapOf(
-                    "pump" to true,
-                    "mode" to "auto",
-                    "command" to "PUMP_ON",
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-                firestore.collection("pumpControl").document(uid).set(pumpDoc)
-            }
-        }
-
-        firestore.collection("weather").document(uid).get().addOnSuccessListener { doc ->
-            if (!doc.exists()) {
-                val weatherDoc = hashMapOf(
-                    "temperature" to 30,
-                    "rainProbability" to 80,
-                    "condition" to "Cloudy",
-                    "recommendation" to "Rain is likely. Consider delaying irrigation.",
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-                firestore.collection("weather").document(uid).set(weatherDoc)
-            }
-        }
     }
 
-    /**
-     * OBSERVE LIVE SENSOR DATA:
-     * sensorData/{currentUser.uid}
-     */
-    fun observeLiveSensorData(): Flow<AquaSustainData> = callbackFlow {
-        val uid = currentUserId
-        if (uid == null) {
-            trySend(AquaSustainData())
-            close()
-            return@callbackFlow
-        }
+    // ========================================================
+    // Telemetry & Pump State
+    // ========================================================
 
-        val docRef = firestore.collection("sensorData").document(uid)
-        val registration = docRef.addSnapshotListener { snapshot, error ->
-            if (error != null) {
-                Log.w(TAG, "Listen error for sensorData/$uid: ${error.message}")
-                return@addSnapshotListener
-            }
-
-            if (snapshot != null && snapshot.exists()) {
-                val rain = snapshot.getBoolean("rain") ?: false
-                val soil = snapshot.getLong("soilMoisture")?.toInt() ?: 35
-                val water = snapshot.getLong("waterLevel")?.toInt() ?: 72
-                val pump = snapshot.getBoolean("pump") ?: false
-                val timestamp = snapshot.getTimestamp("updatedAt")
-                val epochMs = timestamp?.toDate()?.time ?: System.currentTimeMillis()
-
-                val data = AquaSustainData(
-                    rain = rain,
-                    rainStatus = if (rain) "RAIN DETECTED" else "NO RAIN",
-                    soilMoisture = soil.coerceIn(0, 100),
-                    waterLevel = water.coerceIn(0, 100),
-                    pump = pump,
-                    pumpStatus = if (pump) "ON" else "OFF",
-                    updatedAtEpochMs = epochMs
-                )
-                trySend(data)
-            }
-        }
-
-        awaitClose {
-            registration.remove()
-        }
-    }
-
-    /**
-     * SAVE LIVE SENSOR DATA & STORE SENSOR HISTORY:
-     * 1. Updates sensorData/{userId}
-     * 2. Automatically stores reading into sensorHistory/{userId}/records/{recordId}
-     * Avoids duplicate records when data is unchanged.
-     */
     suspend fun saveLiveSensorData(data: AquaSustainData) {
         val uid = currentUserId ?: return
+        if (!data.hasLiveData) return
         try {
-            // Update sensorData/{userId}
             val sensorDoc = hashMapOf(
                 "rain" to data.rain,
                 "soilMoisture" to data.soilMoisture.coerceIn(0, 100),
@@ -325,13 +200,12 @@ class FirebaseManager(
             )
             firestore.collection("sensorData").document(uid).set(sensorDoc).await()
 
-            // Check if record should be added to history (deduplication check)
             val now = System.currentTimeMillis()
             val stateChanged = (data.rain != lastRecordedRain) ||
-                    (data.pump != lastRecordedPump) ||
-                    (abs(data.soilMoisture - lastRecordedSoil) >= 3) ||
-                    (abs(data.waterLevel - lastRecordedWater) >= 3) ||
-                    (now - lastRecordTimestampMs >= 120_000L) // at least record every 2 min if continuous
+                (data.pump != lastRecordedPump) ||
+                (abs(data.soilMoisture - lastRecordedSoil) >= 3) ||
+                (abs(data.waterLevel - lastRecordedWater) >= 3) ||
+                (now - lastRecordTimestampMs >= 120_000L)
 
             if (stateChanged) {
                 recordSensorHistory(
@@ -352,17 +226,6 @@ class FirebaseManager(
         }
     }
 
-    /**
-     * STORE SENSOR HISTORY:
-     * sensorHistory/{userId}/records/{recordId}
-     * {
-     *   "rain": false,
-     *   "soilMoisture": 35,
-     *   "waterLevel": 72,
-     *   "pump": false,
-     *   "timestamp": serverTimestamp()
-     * }
-     */
     suspend fun recordSensorHistory(
         uid: String,
         rain: Boolean,
@@ -387,10 +250,6 @@ class FirebaseManager(
         }
     }
 
-    /**
-     * OBSERVE SENSOR HISTORY:
-     * Reads from sensorHistory/{currentUser.uid}/records
-     */
     fun observeSensorHistory(limit: Long = 100): Flow<List<SensorReading>> = callbackFlow {
         val uid = currentUserId
         if (uid == null) {
@@ -411,7 +270,7 @@ class FirebaseManager(
                 return@addSnapshotListener
             }
 
-            val readings = snapshot.documents.mapNotNull { doc ->
+            val readings = snapshot.documents.map { doc ->
                 val rain = doc.getBoolean("rain") ?: false
                 val soil = doc.getLong("soilMoisture")?.toInt()?.coerceIn(0, 100) ?: 0
                 val water = doc.getLong("waterLevel")?.toInt()?.coerceIn(0, 100) ?: 0
@@ -432,28 +291,30 @@ class FirebaseManager(
             trySend(readings)
         }
 
-        awaitClose {
-            registration.remove()
+        awaitClose { registration.remove() }
+    }
+
+    suspend fun deleteSensorHistoryRecord(recordId: String): Result<Unit> {
+        val uid = currentUserId ?: return Result.failure(Exception("User is not signed in"))
+        return try {
+            firestore.collection("sensorHistory").document(uid)
+                .collection("records").document(recordId).delete().await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 
-    /**
-     * PUMP CONTROL & PUMP STATE CHANGE HISTORY:
-     * Whenever pump changes state: ON -> OFF or OFF -> ON, save event to user's history
-     * and update pumpControl/{userId}.
-     */
     suspend fun updatePumpControl(
         targetPumpOn: Boolean,
         mode: String = "manual",
         currentRain: Boolean = false,
-        currentSoil: Int = 35,
-        currentWater: Int = 72
+        currentSoil: Int = 0,
+        currentWater: Int = 0
     ): Result<Unit> {
         val uid = currentUserId ?: return Result.failure(Exception("User is not signed in"))
         return try {
             val command = if (targetPumpOn) "PUMP_ON" else "PUMP_OFF"
-
-            // 1. Update pumpControl/{userId}
             val pumpDoc = hashMapOf(
                 "pump" to targetPumpOn,
                 "mode" to mode,
@@ -462,7 +323,6 @@ class FirebaseManager(
             )
             firestore.collection("pumpControl").document(uid).set(pumpDoc).await()
 
-            // 2. Update sensorData/{userId}
             val sensorDoc = hashMapOf(
                 "rain" to currentRain,
                 "soilMoisture" to currentSoil.coerceIn(0, 100),
@@ -472,7 +332,6 @@ class FirebaseManager(
             )
             firestore.collection("sensorData").document(uid).set(sensorDoc).await()
 
-            // 3. Save event to sensorHistory/{userId}/records/{recordId}
             recordSensorHistory(
                 uid = uid,
                 rain = currentRain,
@@ -489,14 +348,10 @@ class FirebaseManager(
         }
     }
 
-    /**
-     * OBSERVE WEATHER:
-     * weather/{currentUser.uid}
-     */
-    fun observeWeather(): Flow<WeatherInfo> = callbackFlow {
+    fun observeWeather(): Flow<WeatherInfo?> = callbackFlow {
         val uid = currentUserId
         if (uid == null) {
-            trySend(WeatherInfo())
+            trySend(null)
             close()
             return@callbackFlow
         }
@@ -504,19 +359,19 @@ class FirebaseManager(
         val docRef = firestore.collection("weather").document(uid)
         val registration = docRef.addSnapshotListener { snapshot, error ->
             if (error != null || snapshot == null || !snapshot.exists()) {
-                trySend(WeatherInfo())
+                trySend(null)
                 return@addSnapshotListener
             }
 
-            val temp = snapshot.getLong("temperature")?.toInt() ?: 27
-            val rainProb = snapshot.getLong("rainProbability")?.toInt() ?: 75
-            val cond = snapshot.getString("condition") ?: "Partly Cloudy"
-            val rec = snapshot.getString("recommendation") ?: "Stable atmospheric conditions."
-            val humidity = snapshot.getLong("humidity")?.toInt() ?: 68
+            val temp = snapshot.getLong("temperature")?.toInt() ?: return@addSnapshotListener
+            val rainProb = snapshot.getLong("rainProbability")?.toInt() ?: 0
+            val cond = snapshot.getString("condition") ?: "Unknown"
+            val rec = snapshot.getString("recommendation") ?: ""
+            val humidity = snapshot.getLong("humidity")?.toInt() ?: 0
             val feelsLike = snapshot.getLong("feelsLike")?.toInt() ?: temp
-            val windSpeed = snapshot.getDouble("windSpeed") ?: 12.0
+            val windSpeed = snapshot.getDouble("windSpeed") ?: 0.0
             val precip = snapshot.getDouble("precipitation") ?: 0.0
-            val loc = snapshot.getString("location") ?: "Farm Station"
+            val loc = snapshot.getString("location") ?: "Saved Location"
             val lat = snapshot.getDouble("latitude") ?: 28.6139
             val lon = snapshot.getDouble("longitude") ?: 77.2090
 
@@ -526,7 +381,7 @@ class FirebaseManager(
                     rainProbabilityPercent = rainProb,
                     condition = cond,
                     smartRecommendation = rec,
-                    rainPredictionText = if (rainProb >= 60) "Rain likely in next 3 hours" else "Low rain probability",
+                    rainPredictionText = if (rainProb >= 60) "High rain probability ($rainProb%)" else "Low rain probability ($rainProb%)",
                     humidityPercent = humidity,
                     feelsLikeC = feelsLike,
                     windSpeedKmh = windSpeed,
@@ -534,22 +389,19 @@ class FirebaseManager(
                     locationName = loc,
                     latitude = lat,
                     longitude = lon,
-                    isLive = true
+                    lastUpdatedTime = "Synced",
+                    isLive = false,
+                    hasFetched = true
                 )
             )
         }
 
-        awaitClose {
-            registration.remove()
-        }
+        awaitClose { registration.remove() }
     }
 
-    /**
-     * SAVES LIVE WEATHER TO FIRESTORE:
-     * weather/{currentUser.uid}
-     */
     fun saveWeather(weather: WeatherInfo) {
         val uid = currentUserId ?: return
+        if (!weather.hasFetched) return
         val weatherDoc = hashMapOf(
             "temperature" to weather.temperatureC,
             "rainProbability" to weather.rainProbabilityPercent,
@@ -570,35 +422,251 @@ class FirebaseManager(
             }
     }
 
-    /**
-     * Seed initial history records for a new user
-     */
-    private fun seedInitialHistoryRecords(uid: String) {
-        val recordsRef = firestore.collection("sensorHistory").document(uid).collection("records")
-        val now = System.currentTimeMillis()
+    // ========================================================
+    // Water Quality Analyses (water_quality_analyses/{uid}/records)
+    // ========================================================
 
-        val samplePoints = listOf(
-            Triple(false, 35, 72) to true,
-            Triple(false, 38, 74) to true,
-            Triple(false, 42, 75) to true,
-            Triple(true, 65, 80) to false,
-            Triple(true, 70, 85) to false,
-            Triple(false, 55, 82) to false,
-            Triple(false, 48, 80) to true
-        )
-
-        samplePoints.forEachIndexed { i, pair ->
-            val (rain, soil, water) = pair.first
-            val pump = pair.second
-            val time = Timestamp(Date(now - (samplePoints.size - i) * 30 * 60 * 1000L))
-            val rec = hashMapOf(
-                "rain" to rain,
-                "soilMoisture" to soil,
-                "waterLevel" to water,
-                "pump" to pump,
-                "timestamp" to time
+    suspend fun saveWaterQualityAnalysis(record: WaterQualityAnalysisRecord): Result<String> {
+        val uid = currentUserId ?: return Result.failure(Exception("User is not signed in"))
+        return try {
+            val docId = record.id.ifBlank { firestore.collection("water_quality_analyses").document(uid).collection("records").document().id }
+            val payload = hashMapOf<String, Any?>(
+                "sourceName" to record.sourceName,
+                "ph" to record.ph,
+                "turbidityNtu" to record.turbidityNtu,
+                "temperatureC" to record.temperatureC,
+                "tdsPpm" to record.tdsPpm,
+                "ecUsCm" to record.ecUsCm,
+                "dissolvedOxygenMgL" to record.dissolvedOxygenMgL,
+                "notes" to record.notes,
+                "hasAttachedImage" to record.hasAttachedImage,
+                "statusCategory" to record.statusCategory,
+                "summary" to record.summary,
+                "measuredFindings" to record.measuredFindings,
+                "visualObservations" to record.visualObservations,
+                "warnings" to record.warnings,
+                "recommendations" to record.recommendations,
+                "disclaimer" to record.disclaimer,
+                "analyzedByGemini" to record.analyzedByGemini,
+                "createdAtEpochMs" to record.createdAtEpochMs,
+                "createdAt" to FieldValue.serverTimestamp()
             )
-            recordsRef.add(rec)
+            firestore.collection("water_quality_analyses").document(uid)
+                .collection("records").document(docId).set(payload).await()
+            Result.success(docId)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error saving water quality analysis: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    fun observeWaterQualityAnalyses(limit: Long = 50): Flow<List<WaterQualityAnalysisRecord>> = callbackFlow {
+        val uid = currentUserId
+        if (uid == null) {
+            trySend(emptyList())
+            close()
+            return@callbackFlow
+        }
+
+        val query = firestore.collection("water_quality_analyses").document(uid)
+            .collection("records")
+            .orderBy("createdAtEpochMs", Query.Direction.DESCENDING)
+            .limit(limit)
+
+        val registration = query.addSnapshotListener { snapshot, error ->
+            if (error != null || snapshot == null) {
+                Log.w(TAG, "Water quality query error: ${error?.message}")
+                trySend(emptyList())
+                return@addSnapshotListener
+            }
+
+            val list = snapshot.documents.map { doc ->
+                @Suppress("UNCHECKED_CAST")
+                val warnings = (doc.get("warnings") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+                @Suppress("UNCHECKED_CAST")
+                val recommendations = (doc.get("recommendations") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+
+                WaterQualityAnalysisRecord(
+                    id = doc.id,
+                    sourceName = doc.getString("sourceName") ?: "Water Sample",
+                    ph = doc.getDouble("ph"),
+                    turbidityNtu = doc.getDouble("turbidityNtu"),
+                    temperatureC = doc.getDouble("temperatureC"),
+                    tdsPpm = doc.getDouble("tdsPpm"),
+                    ecUsCm = doc.getDouble("ecUsCm"),
+                    dissolvedOxygenMgL = doc.getDouble("dissolvedOxygenMgL"),
+                    notes = doc.getString("notes") ?: "",
+                    hasAttachedImage = doc.getBoolean("hasAttachedImage") ?: false,
+                    statusCategory = doc.getString("statusCategory") ?: "Saved",
+                    summary = doc.getString("summary") ?: "",
+                    measuredFindings = doc.getString("measuredFindings") ?: "",
+                    visualObservations = doc.getString("visualObservations"),
+                    warnings = warnings,
+                    recommendations = recommendations,
+                    disclaimer = doc.getString("disclaimer") ?: WaterQualityAnalysisRecord.DEFAULT_SAFETY_DISCLAIMER,
+                    analyzedByGemini = doc.getBoolean("analyzedByGemini") ?: false,
+                    createdAtEpochMs = doc.getLong("createdAtEpochMs") ?: System.currentTimeMillis()
+                )
+            }
+            trySend(list)
+        }
+
+        awaitClose { registration.remove() }
+    }
+
+    suspend fun deleteWaterQualityAnalysis(recordId: String): Result<Unit> {
+        val uid = currentUserId ?: return Result.failure(Exception("User is not signed in"))
+        return try {
+            firestore.collection("water_quality_analyses").document(uid)
+                .collection("records").document(recordId).delete().await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    // ========================================================
+    // Water Usage Records (water_usage/{uid}/records)
+    // ========================================================
+
+    suspend fun saveWaterUsageRecord(record: WaterUsageRecord): Result<String> {
+        val uid = currentUserId ?: return Result.failure(Exception("User is not signed in"))
+        return try {
+            val docId = record.id.ifBlank { firestore.collection("water_usage").document(uid).collection("records").document().id }
+            val payload = hashMapOf<String, Any?>(
+                "amountLiters" to record.amountLiters,
+                "category" to record.category,
+                "source" to record.source,
+                "notes" to record.notes,
+                "usageDateEpochMs" to record.usageDateEpochMs,
+                "createdAt" to FieldValue.serverTimestamp()
+            )
+            firestore.collection("water_usage").document(uid)
+                .collection("records").document(docId).set(payload).await()
+            Result.success(docId)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error saving water usage: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    fun observeWaterUsageRecords(limit: Long = 200): Flow<List<WaterUsageRecord>> = callbackFlow {
+        val uid = currentUserId
+        if (uid == null) {
+            trySend(emptyList())
+            close()
+            return@callbackFlow
+        }
+
+        val query = firestore.collection("water_usage").document(uid)
+            .collection("records")
+            .orderBy("usageDateEpochMs", Query.Direction.DESCENDING)
+            .limit(limit)
+
+        val registration = query.addSnapshotListener { snapshot, error ->
+            if (error != null || snapshot == null) {
+                Log.w(TAG, "Water usage query error: ${error?.message}")
+                trySend(emptyList())
+                return@addSnapshotListener
+            }
+
+            val list = snapshot.documents.map { doc ->
+                WaterUsageRecord(
+                    id = doc.id,
+                    amountLiters = doc.getDouble("amountLiters") ?: 0.0,
+                    category = doc.getString("category") ?: "Irrigation",
+                    source = doc.getString("source") ?: "Underground Tank",
+                    notes = doc.getString("notes") ?: "",
+                    usageDateEpochMs = doc.getLong("usageDateEpochMs") ?: System.currentTimeMillis()
+                )
+            }
+            trySend(list)
+        }
+
+        awaitClose { registration.remove() }
+    }
+
+    suspend fun deleteWaterUsageRecord(recordId: String): Result<Unit> {
+        val uid = currentUserId ?: return Result.failure(Exception("User is not signed in"))
+        return try {
+            firestore.collection("water_usage").document(uid)
+                .collection("records").document(recordId).delete().await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    // ========================================================
+    // AI Water Assistant Chat History (ai_water_chat/{uid}/records)
+    // ========================================================
+
+    suspend fun saveWaterChatMessage(message: WaterAssistantMessage): Result<Unit> {
+        val uid = currentUserId ?: return Result.failure(Exception("User is not signed in"))
+        return try {
+            val docId = message.id.ifBlank { firestore.collection("ai_water_chat").document(uid).collection("records").document().id }
+            val payload = hashMapOf<String, Any?>(
+                "role" to message.role,
+                "content" to message.content,
+                "language" to message.language,
+                "timestampEpochMs" to message.timestampEpochMs,
+                "createdAt" to FieldValue.serverTimestamp()
+            )
+            firestore.collection("ai_water_chat").document(uid)
+                .collection("records").document(docId).set(payload).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error saving chat message: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    fun observeWaterChatMessages(limit: Long = 100): Flow<List<WaterAssistantMessage>> = callbackFlow {
+        val uid = currentUserId
+        if (uid == null) {
+            trySend(emptyList())
+            close()
+            return@callbackFlow
+        }
+
+        val query = firestore.collection("ai_water_chat").document(uid)
+            .collection("records")
+            .orderBy("timestampEpochMs", Query.Direction.ASCENDING)
+            .limit(limit)
+
+        val registration = query.addSnapshotListener { snapshot, error ->
+            if (error != null || snapshot == null) {
+                Log.w(TAG, "Water chat query error: ${error?.message}")
+                trySend(emptyList())
+                return@addSnapshotListener
+            }
+
+            val list = snapshot.documents.map { doc ->
+                WaterAssistantMessage(
+                    id = doc.id,
+                    role = doc.getString("role") ?: "user",
+                    content = doc.getString("content") ?: "",
+                    language = doc.getString("language") ?: "English",
+                    timestampEpochMs = doc.getLong("timestampEpochMs") ?: System.currentTimeMillis()
+                )
+            }
+            trySend(list)
+        }
+
+        awaitClose { registration.remove() }
+    }
+
+    suspend fun clearWaterChatHistory(): Result<Unit> {
+        val uid = currentUserId ?: return Result.failure(Exception("User is not signed in"))
+        return try {
+            val docs = firestore.collection("ai_water_chat").document(uid)
+                .collection("records").get().await()
+            val batch = firestore.batch()
+            docs.documents.forEach { batch.delete(it.reference) }
+            batch.commit().await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 
@@ -606,16 +674,26 @@ class FirebaseManager(
         val msg = e.message ?: ""
         return when {
             e is FirebaseAuthInvalidUserException || msg.contains("user-not-found", ignoreCase = true) ->
-                "No account found with this email address. Please register or check your email."
-            e is FirebaseAuthInvalidCredentialsException || msg.contains("wrong-password", ignoreCase = true) || msg.contains("invalid-credential", ignoreCase = true) ->
-                "Incorrect email or password. Please verify your credentials or reset your password."
+                "No account found with this email address. Please create an account or check your email."
+            e is FirebaseAuthInvalidCredentialsException ||
+                msg.contains("wrong-password", ignoreCase = true) ||
+                msg.contains("invalid-credential", ignoreCase = true) ||
+                msg.contains("supplied auth credential", ignoreCase = true) ||
+                msg.contains("malformed", ignoreCase = true) ||
+                msg.contains("expired", ignoreCase = true) ||
+                msg.contains("invalid email", ignoreCase = true) ->
+                "Incorrect email or password, or no account exists for this email yet. Check your credentials, create a new account, or reset your password."
             e is FirebaseAuthUserCollisionException || msg.contains("already in use", ignoreCase = true) || msg.contains("already exists", ignoreCase = true) ->
                 "An account with this email address already exists. Please sign in instead."
             e is FirebaseAuthWeakPasswordException || msg.contains("weak-password", ignoreCase = true) ->
                 "Password is too weak. Please use at least 6 characters."
+            msg.contains("too-many-requests", ignoreCase = true) || msg.contains("unusual activity", ignoreCase = true) ->
+                "Too many unsuccessful sign-in attempts. Please wait a moment or reset your password."
+            msg.contains("operation-not-allowed", ignoreCase = true) ->
+                "Email/password sign-in is not enabled for this Firebase project. Enable Email/Password in Firebase Console."
             e is FirebaseNetworkException || msg.contains("network", ignoreCase = true) ->
                 "Network error. Please check your internet connection."
-            e is FirebaseException -> e.localizedMessage ?: "Unable to connect to AquaSustain services."
+            e is FirebaseException -> e.localizedMessage ?: "Unable to connect to AquaSustain cloud services."
             else -> e.localizedMessage ?: "An unexpected error occurred. Please try again."
         }
     }

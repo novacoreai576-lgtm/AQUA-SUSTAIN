@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Eco
+import androidx.compose.material.icons.filled.ElectricBolt
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Sensors
@@ -31,9 +33,10 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.Eco
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material.icons.outlined.Sensors
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Timeline
 import androidx.compose.material.icons.outlined.WaterDrop
 import androidx.compose.material3.CircularProgressIndicator
@@ -65,6 +68,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.repository.DataSourceMode
 import com.example.ui.AquaSustainViewModel
+import com.example.ui.BioLeafViewModel
 import com.example.ui.HistoryTimeFilter
 import com.example.ui.components.ArduinoConfigDialog
 import com.example.ui.screens.AccountScreen
@@ -74,7 +78,9 @@ import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.IrrigationScreen
 import com.example.ui.screens.SensorsScreen
+import com.example.ui.screens.StorageTankScreen
 import com.example.ui.screens.WeatherScreen
+import com.example.ui.screens.bioleaf.BioLeafHubScreen
 import com.example.ui.theme.AquaPrimary
 import com.example.ui.theme.AquaSustainTheme
 import com.example.ui.theme.EcoGreen
@@ -86,22 +92,27 @@ enum class AppDestination(
     val testTag: String
 ) {
     HOME("Home", Icons.Filled.Home, Icons.Outlined.Home, "nav_home"),
-    SENSORS("Sensors", Icons.Filled.Sensors, Icons.Outlined.Sensors, "nav_sensors"),
-    IRRIGATION("Irrigation", Icons.Filled.WaterDrop, Icons.Outlined.WaterDrop, "nav_irrigation"),
-    WEATHER("Weather & AI", Icons.Filled.Cloud, Icons.Outlined.Cloud, "nav_weather"),
+    WATER("Water", Icons.Filled.WaterDrop, Icons.Outlined.WaterDrop, "nav_water"),
+    IRRIGATION("Irrigation", Icons.Filled.ElectricBolt, Icons.Filled.ElectricBolt, "nav_irrigation"),
+    WEATHER("Weather", Icons.Filled.Cloud, Icons.Outlined.Cloud, "nav_weather"),
+    BIO_LEAF_AI("Bio Leaf", Icons.Filled.Eco, Icons.Outlined.Eco, "nav_bio_leaf_ai"),
     HISTORY("History", Icons.Filled.Timeline, Icons.Outlined.Timeline, "nav_history"),
-    ACCOUNT("Account", Icons.Filled.Person, Icons.Outlined.Person, "nav_account")
+    SETTINGS("Settings", Icons.Filled.Settings, Icons.Outlined.Settings, "nav_settings")
 }
 
 class MainActivity : ComponentActivity() {
     private val viewModel: AquaSustainViewModel by viewModels()
+    private val bioLeafViewModel: BioLeafViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             AquaSustainTheme {
-                AquaSustainRoot(viewModel = viewModel)
+                AquaSustainRoot(
+                    viewModel = viewModel,
+                    bioLeafViewModel = bioLeafViewModel
+                )
             }
         }
     }
@@ -110,6 +121,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AquaSustainRoot(
     viewModel: AquaSustainViewModel,
+    bioLeafViewModel: BioLeafViewModel,
     modifier: Modifier = Modifier
 ) {
     val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
@@ -134,14 +146,14 @@ fun AquaSustainRoot(
                 ) {
                     Icon(
                         imageVector = Icons.Default.WaterDrop,
-                        contentDescription = "AquaSustain",
+                        contentDescription = "Aquasustain",
                         tint = Color.White,
                         modifier = Modifier.size(36.dp)
                     )
                 }
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = "AquaSustain",
+                    text = "Aquasustain",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Black,
                     color = AquaPrimary
@@ -170,6 +182,7 @@ fun AquaSustainRoot(
     } else {
         AquaSustainApp(
             viewModel = viewModel,
+            bioLeafViewModel = bioLeafViewModel,
             onSignOut = { viewModel.signOut() },
             modifier = modifier
         )
@@ -179,6 +192,7 @@ fun AquaSustainRoot(
 @Composable
 fun AquaSustainApp(
     viewModel: AquaSustainViewModel,
+    bioLeafViewModel: BioLeafViewModel,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -200,6 +214,8 @@ fun AquaSustainApp(
     val testFeedback by viewModel.testFeedback.collectAsStateWithLifecycle()
     val commandStatus by viewModel.commandStatus.collectAsStateWithLifecycle()
     val userProfile by viewModel.userProfile.collectAsStateWithLifecycle()
+    val irrigationAdvice by viewModel.irrigationAdvice.collectAsStateWithLifecycle()
+    val isAiAnalyzing by viewModel.isAiAnalyzing.collectAsStateWithLifecycle()
 
     var currentDestination by remember { mutableStateOf(AppDestination.HOME) }
     var showSettingsDialog by remember { mutableStateOf(false) }
@@ -319,6 +335,8 @@ fun AquaSustainApp(
                     ) {
                         AppContent(
                             destination = currentDestination,
+                            bioLeafViewModel = bioLeafViewModel,
+                            currentUid = viewModel.currentUser.collectAsStateWithLifecycle().value?.uid,
                             sensorData = sensorData,
                             connectionStatus = connectionStatus,
                             systemStatus = systemStatus,
@@ -335,14 +353,18 @@ fun AquaSustainApp(
                             formattedElapsed = formattedElapsed,
                             dataSourceMode = dataSourceMode,
                             userProfile = userProfile,
+                            advice = irrigationAdvice,
+                            isAiAnalyzing = isAiAnalyzing,
                             onFilterSelected = { viewModel.setHistoryFilter(it) },
                             onSendPumpCommand = { viewModel.requestPumpAction(it) },
                             onSetMode = { viewModel.setSystemMode(it) },
                             onClearCommandStatus = { viewModel.clearCommandFeedback() },
                             onRefreshWeather = { viewModel.refreshWeather() },
+                            onRefreshAiAdvice = { viewModel.triggerAiAdvisor() },
                             onSelectWeatherLocation = { viewModel.selectWeatherLocation(it) },
                             onSearchWeatherLocation = { viewModel.searchWeatherLocation(it) },
                             onClearWeatherSearch = { viewModel.clearWeatherSearch() },
+                            onNavigateToBioLeaf = { currentDestination = AppDestination.BIO_LEAF_AI },
                             onOpenSettings = { showSettingsDialog = true },
                             onOpenArchitecture = { showArchitectureScreen = true },
                             onSignOut = onSignOut
@@ -366,6 +388,7 @@ fun AquaSustainApp(
                             NavigationBarItem(
                                 selected = selected,
                                 onClick = { currentDestination = destination },
+                                alwaysShowLabel = false,
                                 icon = {
                                     Icon(
                                         imageVector = if (selected) destination.selectedIcon else destination.unselectedIcon,
@@ -375,7 +398,7 @@ fun AquaSustainApp(
                                 label = {
                                     Text(
                                         text = destination.title,
-                                        fontSize = 10.sp,
+                                        fontSize = 9.sp,
                                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                                         maxLines = 1
                                     )
@@ -398,6 +421,8 @@ fun AquaSustainApp(
                 ) {
                     AppContent(
                         destination = currentDestination,
+                        bioLeafViewModel = bioLeafViewModel,
+                        currentUid = viewModel.currentUser.collectAsStateWithLifecycle().value?.uid,
                         sensorData = sensorData,
                         connectionStatus = connectionStatus,
                         systemStatus = systemStatus,
@@ -414,14 +439,18 @@ fun AquaSustainApp(
                         formattedElapsed = formattedElapsed,
                         dataSourceMode = dataSourceMode,
                         userProfile = userProfile,
+                        advice = irrigationAdvice,
+                        isAiAnalyzing = isAiAnalyzing,
                         onFilterSelected = { viewModel.setHistoryFilter(it) },
                         onSendPumpCommand = { viewModel.requestPumpAction(it) },
                         onSetMode = { viewModel.setSystemMode(it) },
                         onClearCommandStatus = { viewModel.clearCommandFeedback() },
                         onRefreshWeather = { viewModel.refreshWeather() },
+                        onRefreshAiAdvice = { viewModel.triggerAiAdvisor() },
                         onSelectWeatherLocation = { viewModel.selectWeatherLocation(it) },
                         onSearchWeatherLocation = { viewModel.searchWeatherLocation(it) },
                         onClearWeatherSearch = { viewModel.clearWeatherSearch() },
+                        onNavigateToBioLeaf = { currentDestination = AppDestination.BIO_LEAF_AI },
                         onOpenSettings = { showSettingsDialog = true },
                         onOpenArchitecture = { showArchitectureScreen = true },
                         onSignOut = onSignOut
@@ -435,6 +464,8 @@ fun AquaSustainApp(
 @Composable
 private fun AppContent(
     destination: AppDestination,
+    bioLeafViewModel: BioLeafViewModel,
+    currentUid: String?,
     sensorData: com.example.data.model.AquaSustainData,
     connectionStatus: com.example.data.model.ConnectionStatus,
     systemStatus: com.example.data.model.SystemStatusSummary,
@@ -451,14 +482,18 @@ private fun AppContent(
     formattedElapsed: String,
     dataSourceMode: DataSourceMode,
     userProfile: com.example.data.model.UserProfile?,
+    advice: com.example.data.model.IrrigationAdvice? = null,
+    isAiAnalyzing: Boolean = false,
     onFilterSelected: (HistoryTimeFilter) -> Unit,
     onSendPumpCommand: (Boolean) -> Unit,
     onSetMode: (String) -> Unit,
     onClearCommandStatus: () -> Unit,
     onRefreshWeather: () -> Unit,
+    onRefreshAiAdvice: () -> Unit,
     onSelectWeatherLocation: (com.example.data.model.GeoLocation) -> Unit,
     onSearchWeatherLocation: (String) -> Unit,
     onClearWeatherSearch: () -> Unit,
+    onNavigateToBioLeaf: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenArchitecture: () -> Unit,
     onSignOut: () -> Unit
@@ -471,16 +506,20 @@ private fun AppContent(
                 systemStatus = systemStatus,
                 deviceMetadata = deviceMetadata,
                 weatherInfo = weatherInfo,
+                advice = advice,
+                isAiAnalyzing = isAiAnalyzing,
                 commandStatus = commandStatus,
                 formattedElapsed = formattedElapsed,
                 dataSourceMode = dataSourceMode,
                 onSendPumpCommand = onSendPumpCommand,
                 onSetMode = onSetMode,
                 onClearCommandStatus = onClearCommandStatus,
+                onRefreshAiAdvice = onRefreshAiAdvice,
+                onOpenBioLeaf = onNavigateToBioLeaf,
                 onOpenSettings = onOpenSettings,
                 onSignOut = onSignOut
             )
-            AppDestination.SENSORS -> SensorsScreen(
+            AppDestination.WATER -> StorageTankScreen(
                 sensorData = sensorData
             )
             AppDestination.IRRIGATION -> IrrigationScreen(
@@ -492,22 +531,33 @@ private fun AppContent(
             )
             AppDestination.WEATHER -> WeatherScreen(
                 weather = weatherInfo,
+                advice = advice,
+                isAiAnalyzing = isAiAnalyzing,
                 isRefreshing = isRefreshingWeather,
                 weatherErrorMessage = weatherErrorMessage,
                 searchResults = weatherSearchResults,
                 isSearching = isSearchingWeatherLocation,
                 searchQuery = weatherSearchQuery,
                 onRefreshWeather = onRefreshWeather,
+                onRefreshAiAdvice = onRefreshAiAdvice,
                 onSelectLocation = onSelectWeatherLocation,
                 onSearchLocation = onSearchWeatherLocation,
                 onClearSearch = onClearWeatherSearch
+            )
+            AppDestination.BIO_LEAF_AI -> BioLeafHubScreen(
+                viewModel = bioLeafViewModel,
+                userProfile = userProfile,
+                currentUid = currentUid,
+                onSignOut = onSignOut,
+                onOpenSettings = onOpenSettings,
+                onOpenArchitecture = onOpenArchitecture
             )
             AppDestination.HISTORY -> HistoryScreen(
                 readings = filteredHistory,
                 selectedFilter = selectedFilter,
                 onFilterSelected = onFilterSelected
             )
-            AppDestination.ACCOUNT -> AccountScreen(
+            AppDestination.SETTINGS -> AccountScreen(
                 userProfile = userProfile,
                 onSignOut = onSignOut,
                 onOpenSettings = onOpenSettings,

@@ -5,14 +5,15 @@ import com.squareup.moshi.Json
 data class AquaSustainData(
     @Json(name = "rain") val rain: Boolean = false,
     @Json(name = "rainStatus") val rainStatus: String? = null,
-    @Json(name = "soilMoisture") val soilMoisture: Int = 35,
-    @Json(name = "waterLevel") val waterLevel: Int = 72,
-    @Json(name = "pump") val pump: Boolean = true,
+    @Json(name = "soilMoisture") val soilMoisture: Int = 0,
+    @Json(name = "waterLevel") val waterLevel: Int = 0,
+    @Json(name = "pump") val pump: Boolean = false,
     @Json(name = "pumpStatus") val pumpStatus: String? = null,
     @Json(name = "systemStatus") val systemStatus: String? = null,
     @Json(name = "mode") val mode: String = "auto",
     @Json(name = "deviceId") val deviceId: String = "AQUA-001",
-    val updatedAtEpochMs: Long = System.currentTimeMillis()
+    val updatedAtEpochMs: Long = 0L,
+    val hasLiveData: Boolean = false
 ) {
     val isAutoMode: Boolean
         get() = mode.equals("auto", ignoreCase = true)

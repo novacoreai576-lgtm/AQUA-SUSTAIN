@@ -122,7 +122,7 @@ fun ArchitectureScreen(
                         color = AlertRed
                     )
                     Text(
-                        text = "AquaSustain operates via direct, private Wi-Fi communication with the Arduino UNO R4 WiFi. No Blynk Cloud, third-party cloud brokers, or paid IoT subscriptions are involved.",
+                        text = "Aquasustain operates via direct, private Wi-Fi communication with the Arduino UNO R4 WiFi. No Blynk Cloud, third-party cloud brokers, or paid IoT subscriptions are involved.",
                         style = MaterialTheme.typography.bodySmall,
                         color = NeutralDark,
                         lineHeight = 16.sp
@@ -339,7 +339,7 @@ fun ArchitectureScreen(
 
                 ArchitectureNode(
                     icon = Icons.Default.PhoneAndroid,
-                    title = "AquaSustain App",
+                    title = "Aquasustain App",
                     subtitle = "Live Dashboard • Monitoring • Tank & Pump Visualizer",
                     tag = "Presentation",
                     color = EcoGreen,

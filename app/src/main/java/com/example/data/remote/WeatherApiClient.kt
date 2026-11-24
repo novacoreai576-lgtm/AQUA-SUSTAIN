@@ -201,6 +201,7 @@ class WeatherApiClient(
                     longitude = longitude,
                     lastUpdatedTime = currentTimeFormatted,
                     isLive = true,
+                    hasFetched = true,
                     weatherCode = weatherCode,
                     hourlyForecast = hourlyList,
                     dailyForecast = dailyList
@@ -251,7 +252,7 @@ class WeatherApiClient(
                     val item = resultsArr.optJSONObject(i) ?: continue
                     val name = item.optString("name", "")
                     val country = item.optString("country", "")
-                    val admin1 = item.optString("admin1", null)
+                    val admin1 = if (item.isNull("admin1")) null else item.optString("admin1").ifBlank { null }
                     val lat = item.optDouble("latitude", 0.0)
                     val lon = item.optDouble("longitude", 0.0)
 

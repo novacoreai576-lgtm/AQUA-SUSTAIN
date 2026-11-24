@@ -117,7 +117,12 @@ fun AuthScreen(
 
     // Forgot Password Dialog
     if (showForgotPasswordDialog) {
-        var resetEmail by remember { mutableStateOf(loginEmail) }
+        val initialResetEmail = if (screenMode == AuthScreenMode.REGISTER && regEmail.isNotBlank()) {
+            regEmail.trim()
+        } else {
+            loginEmail.trim()
+        }
+        var resetEmail by remember(initialResetEmail) { mutableStateOf(initialResetEmail) }
         AlertDialog(
             onDismissRequest = { showForgotPasswordDialog = false },
             title = {
@@ -193,7 +198,7 @@ fun AuthScreen(
             ) {
                 Icon(
                     imageVector = Icons.Default.WaterDrop,
-                    contentDescription = "AquaSustain Logo",
+                    contentDescription = "Aquasustain Logo",
                     tint = Color.White,
                     modifier = Modifier.size(38.dp)
                 )
@@ -202,7 +207,7 @@ fun AuthScreen(
             Spacer(modifier = Modifier.height(14.dp))
 
             Text(
-                text = "AquaSustain",
+                text = "Aquasustain",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Black,
                 color = AquaPrimary
@@ -251,7 +256,7 @@ fun AuthScreen(
                             Spacer(modifier = Modifier.width(6.dp))
                         }
                         Text(
-                            text = if (screenMode == AuthScreenMode.LOGIN) "Sign In to AquaSustain" else "Create Account",
+                            text = if (screenMode == AuthScreenMode.LOGIN) "Sign In to Aquasustain" else "Create Account",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = NeutralDark
@@ -269,6 +274,10 @@ fun AuthScreen(
                         if (authUiState is AuthUiState.Error) {
                             val isUserCollision = authUiState.message.contains("already exists", ignoreCase = true) ||
                                     authUiState.message.contains("already in use", ignoreCase = true)
+
+                            val isInvalidCredentials = authUiState.message.contains("Incorrect email or password", ignoreCase = true) ||
+                                    authUiState.message.contains("credentials", ignoreCase = true) ||
+                                    authUiState.message.contains("no account exists", ignoreCase = true)
 
                             Column(
                                 modifier = Modifier
@@ -308,26 +317,81 @@ fun AuthScreen(
                                     }
                                 }
 
+                                if (isInvalidCredentials && screenMode == AuthScreenMode.LOGIN) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        TextButton(
+                                            onClick = {
+                                                if (loginEmail.isNotBlank()) {
+                                                    regEmail = loginEmail.trim()
+                                                }
+                                                viewModel.clearAuthError()
+                                                screenMode = AuthScreenMode.REGISTER
+                                            },
+                                            modifier = Modifier.testTag("error_banner_create_account_button")
+                                        ) {
+                                            Text(
+                                                "Create Account",
+                                                color = EcoGreen,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                        TextButton(
+                                            onClick = {
+                                                showForgotPasswordDialog = true
+                                            },
+                                            modifier = Modifier.testTag("error_banner_reset_password_button")
+                                        ) {
+                                            Text(
+                                                "Reset Password →",
+                                                color = AquaPrimary,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+
                                 if (isUserCollision && screenMode == AuthScreenMode.REGISTER) {
                                     Spacer(modifier = Modifier.height(10.dp))
-                                    Button(
-                                        onClick = {
-                                            if (regEmail.isNotBlank()) {
-                                                loginEmail = regEmail.trim()
-                                            }
-                                            if (regPassword.isNotBlank()) {
-                                                loginPassword = regPassword
-                                            }
-                                            viewModel.clearAuthError()
-                                            screenMode = AuthScreenMode.LOGIN
-                                        },
-                                        colors = ButtonDefaults.buttonColors(containerColor = AquaPrimary),
-                                        shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .testTag("switch_to_login_button")
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text("Switch to Sign In", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        Button(
+                                            onClick = {
+                                                if (regEmail.isNotBlank()) {
+                                                    loginEmail = regEmail.trim()
+                                                }
+                                                loginPassword = ""
+                                                viewModel.clearAuthError()
+                                                screenMode = AuthScreenMode.LOGIN
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = AquaPrimary),
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .testTag("switch_to_login_button")
+                                        ) {
+                                            Text("Sign In", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        }
+                                        OutlinedButton(
+                                            onClick = {
+                                                showForgotPasswordDialog = true
+                                            },
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .testTag("collision_reset_password_button")
+                                        ) {
+                                            Text("Reset Password", color = AquaPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        }
                                     }
                                 }
                             }
@@ -368,7 +432,10 @@ fun AuthScreen(
                         // ==========================================
                         OutlinedTextField(
                             value = loginEmail,
-                            onValueChange = { loginEmail = it },
+                            onValueChange = {
+                                loginEmail = it
+                                viewModel.clearAuthError()
+                            },
                             label = { Text("Email") },
                             leadingIcon = {
                                 Icon(Icons.Default.Email, contentDescription = null, tint = AquaPrimary)
@@ -383,8 +450,11 @@ fun AuthScreen(
                                 .fillMaxWidth()
                                 .testTag("auth_email_input"),
                             colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.Black,
+                                unfocusedTextColor = Color.Black,
                                 focusedBorderColor = AquaPrimary,
-                                focusedLabelColor = AquaPrimary
+                                focusedLabelColor = AquaPrimary,
+                                cursorColor = Color.Black
                             )
                         )
 
@@ -392,7 +462,10 @@ fun AuthScreen(
 
                         OutlinedTextField(
                             value = loginPassword,
-                            onValueChange = { loginPassword = it },
+                            onValueChange = {
+                                loginPassword = it
+                                viewModel.clearAuthError()
+                            },
                             label = { Text("Password") },
                             leadingIcon = {
                                 Icon(Icons.Default.Lock, contentDescription = null, tint = AquaPrimary)
@@ -413,15 +486,20 @@ fun AuthScreen(
                                 imeAction = ImeAction.Done
                             ),
                             keyboardActions = KeyboardActions(onDone = {
-                                focusManager.clearFocus()
-                                viewModel.signIn(loginEmail, loginPassword)
+                                if (authUiState !is AuthUiState.Loading) {
+                                    focusManager.clearFocus()
+                                    viewModel.signIn(loginEmail, loginPassword)
+                                }
                             }),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("auth_password_input"),
                             colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.Black,
+                                unfocusedTextColor = Color.Black,
                                 focusedBorderColor = AquaPrimary,
-                                focusedLabelColor = AquaPrimary
+                                focusedLabelColor = AquaPrimary,
+                                cursorColor = Color.Black
                             )
                         )
 
@@ -490,7 +568,10 @@ fun AuthScreen(
                         // ==========================================
                         OutlinedTextField(
                             value = regName,
-                            onValueChange = { regName = it },
+                            onValueChange = {
+                                regName = it
+                                viewModel.clearAuthError()
+                            },
                             label = { Text("Name") },
                             leadingIcon = {
                                 Icon(Icons.Default.Person, contentDescription = null, tint = AquaPrimary)
@@ -502,8 +583,11 @@ fun AuthScreen(
                                 .fillMaxWidth()
                                 .testTag("auth_name_input"),
                             colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.Black,
+                                unfocusedTextColor = Color.Black,
                                 focusedBorderColor = AquaPrimary,
-                                focusedLabelColor = AquaPrimary
+                                focusedLabelColor = AquaPrimary,
+                                cursorColor = Color.Black
                             )
                         )
 
@@ -511,7 +595,10 @@ fun AuthScreen(
 
                         OutlinedTextField(
                             value = regEmail,
-                            onValueChange = { regEmail = it },
+                            onValueChange = {
+                                regEmail = it
+                                viewModel.clearAuthError()
+                            },
                             label = { Text("Email") },
                             leadingIcon = {
                                 Icon(Icons.Default.Email, contentDescription = null, tint = AquaPrimary)
@@ -526,8 +613,11 @@ fun AuthScreen(
                                 .fillMaxWidth()
                                 .testTag("auth_reg_email_input"),
                             colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.Black,
+                                unfocusedTextColor = Color.Black,
                                 focusedBorderColor = AquaPrimary,
-                                focusedLabelColor = AquaPrimary
+                                focusedLabelColor = AquaPrimary,
+                                cursorColor = Color.Black
                             )
                         )
 
@@ -535,7 +625,10 @@ fun AuthScreen(
 
                         OutlinedTextField(
                             value = regPassword,
-                            onValueChange = { regPassword = it },
+                            onValueChange = {
+                                regPassword = it
+                                viewModel.clearAuthError()
+                            },
                             label = { Text("Password") },
                             leadingIcon = {
                                 Icon(Icons.Default.Lock, contentDescription = null, tint = AquaPrimary)
@@ -560,16 +653,26 @@ fun AuthScreen(
                                 .fillMaxWidth()
                                 .testTag("auth_reg_password_input"),
                             colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.Black,
+                                unfocusedTextColor = Color.Black,
                                 focusedBorderColor = AquaPrimary,
-                                focusedLabelColor = AquaPrimary
+                                focusedLabelColor = AquaPrimary,
+                                cursorColor = Color.Black
                             )
                         )
 
                         Spacer(modifier = Modifier.height(10.dp))
 
+                        val hasCollisionError = authUiState is AuthUiState.Error &&
+                            (authUiState.message.contains("already exists", ignoreCase = true) ||
+                                authUiState.message.contains("already in use", ignoreCase = true))
+
                         OutlinedTextField(
                             value = regConfirmPassword,
-                            onValueChange = { regConfirmPassword = it },
+                            onValueChange = {
+                                regConfirmPassword = it
+                                viewModel.clearAuthError()
+                            },
                             label = { Text("Confirm Password") },
                             leadingIcon = {
                                 Icon(Icons.Default.Lock, contentDescription = null, tint = AquaPrimary)
@@ -581,15 +684,20 @@ fun AuthScreen(
                                 imeAction = ImeAction.Done
                             ),
                             keyboardActions = KeyboardActions(onDone = {
-                                focusManager.clearFocus()
-                                viewModel.signUp(regName, regEmail, regPassword, regConfirmPassword)
+                                if (authUiState !is AuthUiState.Loading && !hasCollisionError) {
+                                    focusManager.clearFocus()
+                                    viewModel.signUp(regName, regEmail, regPassword, regConfirmPassword)
+                                }
                             }),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("auth_confirm_password_input"),
                             colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.Black,
+                                unfocusedTextColor = Color.Black,
                                 focusedBorderColor = AquaPrimary,
-                                focusedLabelColor = AquaPrimary
+                                focusedLabelColor = AquaPrimary,
+                                cursorColor = Color.Black
                             )
                         )
 
@@ -600,7 +708,7 @@ fun AuthScreen(
                                 focusManager.clearFocus()
                                 viewModel.signUp(regName, regEmail, regPassword, regConfirmPassword)
                             },
-                            enabled = authUiState !is AuthUiState.Loading,
+                            enabled = authUiState !is AuthUiState.Loading && !hasCollisionError,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(50.dp)

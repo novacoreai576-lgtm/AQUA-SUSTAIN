@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "AquaSustain"
+rootProject.name = "Aquasustain"
 
 include(":app")

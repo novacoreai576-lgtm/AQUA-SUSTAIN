@@ -231,8 +231,11 @@ fun ArduinoConfigDialog(
                             .fillMaxWidth()
                             .testTag("arduino_ip_input"),
                         colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.Black,
+                            unfocusedTextColor = Color.Black,
                             focusedBorderColor = AquaPrimary,
-                            focusedLabelColor = AquaPrimary
+                            focusedLabelColor = AquaPrimary,
+                            cursorColor = Color.Black
                         )
                     )
                 }

@@ -3,6 +3,10 @@ package com.example
 import com.example.data.model.AquaSustainData
 import com.example.data.model.SoilStatus
 import com.example.data.model.TankLevelCategory
+import com.example.data.model.WaterQualityInput
+import com.example.data.model.WaterUsageRecord
+import com.example.data.model.WaterUsageSummary
+import com.example.data.repository.AquaSustainRepository
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -92,13 +96,13 @@ class ExampleUnitTest {
 
     @Test
     fun testResolvedSystemStatus_DefaultFallback() {
-        val dataDry = AquaSustainData(rain = false, soilMoisture = 30, pump = true, systemStatus = null)
+        val dataDry = AquaSustainData(rain = false, soilMoisture = 30, waterLevel = 70, pump = true, systemStatus = null)
         assertEquals("NO RAIN + SOIL < 50% - IRRIGATION ON", dataDry.resolvedSystemStatus)
 
-        val dataRain = AquaSustainData(rain = true, soilMoisture = 30, pump = false, systemStatus = null)
+        val dataRain = AquaSustainData(rain = true, soilMoisture = 30, waterLevel = 70, pump = false, systemStatus = null)
         assertEquals("RAIN DETECTED - IRRIGATION OFF", dataRain.resolvedSystemStatus)
 
-        val dataWet = AquaSustainData(rain = false, soilMoisture = 60, pump = false, systemStatus = null)
+        val dataWet = AquaSustainData(rain = false, soilMoisture = 60, waterLevel = 70, pump = false, systemStatus = null)
         assertEquals("NO RAIN + SOIL >= 50% - IRRIGATION OFF", dataWet.resolvedSystemStatus)
     }
 
@@ -148,5 +152,68 @@ class ExampleUnitTest {
         assertEquals(55, weather.humidityPercent)
         assertEquals("Ludhiana, Punjab, India", weather.locationName)
         assertTrue(weather.isLive)
+    }
+
+    @Test
+    fun testNoDemoMode_DisconnectedSensorDefaults() {
+        val disconnected = AquaSustainRepository.disconnectedSensorState()
+        assertFalse(disconnected.hasLiveData)
+        assertEquals(0, disconnected.soilMoisture)
+        assertEquals(0, disconnected.waterLevel)
+        assertFalse(disconnected.pump)
+        assertFalse(disconnected.rain)
+        assertEquals("Device Not Connected.", disconnected.systemStatus)
+    }
+
+    @Test
+    fun testWaterQualityInput_Validation() {
+        assertFalse(WaterQualityInput(sourceName = "Tank").hasAnyMeasurement())
+        assertTrue(WaterQualityInput(sourceName = "Tank", ph = 7.2).hasAnyMeasurement())
+        assertTrue(WaterQualityInput(sourceName = "Well", tdsPpm = 220.0).hasAnyMeasurement())
+    }
+
+    @Test
+    fun testWaterUsageSummary_RealAggregationAndEmptyState() {
+        val empty = WaterUsageSummary.compute(emptyList())
+        assertEquals(0, empty.totalRecords)
+        assertEquals(0.0, empty.todayLiters, 0.001)
+        assertEquals(0.0, empty.weeklyLiters, 0.001)
+        assertTrue(empty.wastageAlerts.isEmpty())
+
+        val now = System.currentTimeMillis()
+        val dayMs = 24L * 60L * 60L * 1000L
+        val records = listOf(
+            WaterUsageRecord(id = "1", amountLiters = 400.0, category = "Irrigation", usageDateEpochMs = now),
+            WaterUsageRecord(id = "2", amountLiters = 100.0, category = "Household", usageDateEpochMs = now - dayMs),
+            WaterUsageRecord(id = "3", amountLiters = 120.0, category = "Household", usageDateEpochMs = now - 2 * dayMs)
+        )
+        val summary = WaterUsageSummary.compute(records, nowMs = now)
+        assertEquals(3, summary.totalRecords)
+        assertEquals(400.0, summary.todayLiters, 0.001)
+        assertEquals(100.0, summary.yesterdayLiters, 0.001)
+        assertEquals(620.0, summary.weeklyLiters, 0.001)
+        assertEquals(620.0, summary.monthlyLiters, 0.001)
+        assertEquals(300.0, summary.dailyDifferenceLiters, 0.001)
+        assertEquals(7, summary.dailySeries.size)
+        assertTrue(summary.wastageAlerts.isNotEmpty())
+        assertEquals("Irrigation", summary.categoryBreakdown.first().category)
+    }
+
+    @Test
+    fun testSidebarDestinations_ExactEightAquaSustainItems() {
+        val titles = AppDestination.entries.map { it.title }
+        assertEquals(
+            listOf(
+                "Home",
+                "Water Dashboard",
+                "Water Quality Analysis",
+                "Water Usage",
+                "AI Water Assistant",
+                "History",
+                "Reports",
+                "Settings"
+            ),
+            titles
+        )
     }
 }
